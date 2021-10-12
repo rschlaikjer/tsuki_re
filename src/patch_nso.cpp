@@ -109,6 +109,15 @@ int main(int argc, char **argv) {
                           sizeof(nso_header->text_hash)))
               .c_str());
 
+  // Print the total data uncompressed size
+  const int uncompressed_total =
+      nso_header->text_segment_header.decompressed_size +
+      nso_header->rodata_segment_header.decompressed_size +
+      nso_header->data_segment_header.decompressed_size +
+      nso_header->rel_api_info.size + nso_header->rel_dynstr.size +
+      nso_header->rel_dynsym.size;
+  fprintf(stderr, "Total expanded size: %d\n", uncompressed_total);
+
   // Extract the text segment
   std::string decompressed_text;
   decompressed_text.resize(nso_header->text_segment_header.decompressed_size);

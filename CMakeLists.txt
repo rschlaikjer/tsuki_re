@@ -40,6 +40,23 @@ target_link_libraries(patch_nso
   crypto
 )
 
+add_executable(rewrite_nso
+  src/rewrite_nso.cpp
+)
+target_link_libraries(rewrite_nso
+  lz4
+  ssl
+  crypto
+)
+
 add_executable(mkips
   src/mkips.cpp
+)
+
+add_executable(gen_ips
+  src/gen_ips.cpp
+)
+
+add_executable(unmzx
+  src/unmzx.cpp
 )

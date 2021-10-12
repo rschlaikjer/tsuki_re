@@ -1,5 +1,7 @@
+#include <errno.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <string.h>
 #include <unistd.h>
 
 #include <vector>
@@ -15,14 +17,15 @@ struct IpsEntry {
 };
 
 int main(int argc, char **argv) {
-  if (argc != 3) {
-    fprintf(stderr, "%s base patched\n", argv[0]);
+  if (argc != 4) {
+    fprintf(stderr, "%s base patched out_ips\n", argv[0]);
     return -1;
   }
 
   // Load input files
   auto base_nso = MappedData::open(argv[1]);
   auto modded_nso = MappedData::open(argv[2]);
+  const char *output_file = argv[3];
 
   // Accumulate patch entries
   std::vector<IpsEntry> entries;
@@ -60,8 +63,18 @@ int main(int argc, char **argv) {
     entries.emplace_back(current_diff_start, current_diff_data);
   }
 
+  // Open our output file
+  int output_fd = ::open(output_file, O_RDWR | O_CREAT, 0644);
+  if (output_fd < 0) {
+    fprintf(stderr, "Failed to open %s: %d: %s\n", output_file, errno,
+            strerror(errno));
+    return -1;
+  }
+  std::shared_ptr<void> _defer_close_fd(nullptr,
+                                        [=](...) { ::close(output_fd); });
+
   // Emit patch file, starting with header
-  write(STDOUT_FILENO, "PATCH", 5);
+  write(output_fd, "PATCH", 5);
 
   // Patch records
   for (auto &entry : entries) {
@@ -76,19 +89,19 @@ int main(int argc, char **argv) {
     offset_buf[0] = (entry.offset >> 16) & 0xFF;
     offset_buf[1] = (entry.offset >> 8) & 0xFF;
     offset_buf[2] = (entry.offset >> 0) & 0xFF;
-    write(STDOUT_FILENO, offset_buf, 3);
+    write(output_fd, offset_buf, 3);
 
     // Size, 16-bit BE
     uint8_t size_buf[2];
     size_buf[0] = (entry.data.size() >> 8) & 0xFF;
     size_buf[1] = (entry.data.size() >> 0) & 0xFF;
-    write(STDOUT_FILENO, size_buf, 2);
+    write(output_fd, size_buf, 2);
 
     // Data
-    write(STDOUT_FILENO, entry.data.data(), entry.data.size());
+    write(output_fd, entry.data.data(), entry.data.size());
   }
 
-  write(STDOUT_FILENO, "EOF", 3);
+  write(output_fd, "EOF", 3);
 
   return 0;
 }
