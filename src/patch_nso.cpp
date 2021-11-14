@@ -84,8 +84,10 @@ int main(int argc, char **argv) {
   */
 
   std::vector<PatchEntry> patch_entries = {
-      // PatchEntry(0x142784, svc_0x27),
-      PatchEntry(0x142784, nop),
+      // 1.0.2
+      // Replace calls to disable recording with enable recording
+      PatchEntry(0xfbf54, {0x73, 0x5e, 0x01, 0x14}), // Recording
+      PatchEntry(0xfbf68, {0x76, 0x5e, 0x01, 0x14}), // Screenshot
   };
 
   // Map the NSO
