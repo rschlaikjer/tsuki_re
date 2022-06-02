@@ -58,40 +58,71 @@ struct PatchEntry {
   const std::vector<uint8_t> data;
 };
 
+std::vector<PatchEntry> parse_nso_as_patch_entries(const MappedData &ips) {
+  std::vector<PatchEntry> ret;
+
+  // IPS format:
+  // Repeated:
+  //   24-bit offset (BE)
+  //   16-bit size (BE)
+  //   SIZE bytes of data
+  static const int TEXT_OFFSET = 0x100;
+
+  if (memcmp("PATCH", ips._data, 5) != 0) {
+    fprintf(stderr, "Invalid .ips file\n");
+    asm volatile("ud2");
+  }
+
+  ssize_t ips_read_offset = 5;
+  while (ips_read_offset + 5 < ips._size) {
+    // Extract offset
+    uint32_t offset = ((ips._data[ips_read_offset + 0] << 16) |
+                       (ips._data[ips_read_offset + 1] << 8) |
+                       (ips._data[ips_read_offset + 2] << 0));
+    offset -= TEXT_OFFSET;
+    ips_read_offset += 3;
+
+    // Extract size
+    uint16_t size = ((ips._data[ips_read_offset + 0] << 8) |
+                     (ips._data[ips_read_offset + 1] << 0));
+    ips_read_offset += 2;
+
+    // Append new patch entry
+    const uint8_t *data_begin = &ips._data[ips_read_offset];
+    const uint8_t *data_end = &ips._data[ips_read_offset + size];
+    ret.emplace_back(
+        PatchEntry(offset, std::vector<uint8_t>(data_begin, data_end)));
+
+    ips_read_offset += size;
+  }
+
+  return ret;
+}
+
 int main(int argc, char **argv) {
-  if (argc != 3) {
-    fprintf(stderr, "%s in_nso out_nso\n", argv[0]);
+  if (argc != 4) {
+    fprintf(stderr, "%s in_nso out_nso in_ips\n", argv[0]);
     return -1;
   }
 
-  const char *input_file = argv[1];
-  const char *output_file = argv[2];
+  const char *input_nso = argv[1];
+  const char *output_nso = argv[2];
+  const char *input_ips = argv[3];
 
-  // Instructions to patch
-  static const std::vector<uint8_t> nop = {0x1f, 0x20, 0x03, 0xd5};
-  static const std::vector<uint8_t> svc_0x27 = {0xe1, 0x04, 0x00, 0xd4};
-  static const std::vector<uint8_t> mov_x0_0x0 = {0x00, 0x00, 0x80, 0xd2};
-  static const std::vector<uint8_t> mov_w0_0x0 = {0x00, 0x00, 0x80, 0x52};
-  static const std::vector<uint8_t> mov_w1_0x0 = {0x01, 0x00, 0x80, 0x52};
-  static const std::vector<uint8_t> mov_w1_0x1 = {0x21, 0x00, 0x80, 0x52};
+  // Load IPS and parse into a series of patch entries
+  auto mapped_ips = MappedData::open(input_ips);
+  std::vector<PatchEntry> patch_entries =
+      parse_nso_as_patch_entries(*mapped_ips);
 
-  /*
-  std::vector<PatchEntry> patch_entries = {
-      PatchEntry(0x142780, mov_w1_0x0),
-      PatchEntry(0x1436c8, mov_w1_0x0),
-      PatchEntry(0x144178, mov_w1_0x0),
-  };
-  */
-
-  std::vector<PatchEntry> patch_entries = {
-      // 1.0.2
-      // Replace calls to disable recording with enable recording
-      PatchEntry(0xfbf54, {0x73, 0x5e, 0x01, 0x14}), // Recording
-      PatchEntry(0xfbf68, {0x76, 0x5e, 0x01, 0x14}), // Screenshot
-  };
+  // 1.0.2
+  // Replace calls to disable recording with enable recording
+  //   patch_entries.emplace_back(
+  //       PatchEntry(0xfbf54, {0x73, 0x5e, 0x01, 0x14})); // Recording
+  //   patch_entries.emplace_back(
+  //       PatchEntry(0xfbf68, {0x76, 0x5e, 0x01, 0x14})); // Screenshot
 
   // Map the NSO
-  auto original_nso = MappedData::open(input_file);
+  auto original_nso = MappedData::open(input_nso);
 
   // Pun the header on the the first 0x100 bytes and print some info
   const NSOHeader *nso_header =
@@ -164,10 +195,10 @@ int main(int argc, char **argv) {
     std::string new_text{reinterpret_cast<const char *>(entry.data.data()),
                          entry.data.size()};
     fprintf(stderr,
-            "Patching offset %08x:\n"
+            "Patching offset %08x + %ld:\n"
             "    Was: %s\n"
             "    Now: %s\n",
-            entry.offset, bytes_to_hex(old_text).c_str(),
+            entry.offset, entry.data.size(), bytes_to_hex(old_text).c_str(),
             bytes_to_hex(new_text).c_str());
 
     // Overwrite the data
@@ -210,9 +241,9 @@ int main(int argc, char **argv) {
   new_header.data_segment_header.file_offset += size_delta;
 
   // Open our output file
-  int output_fd = ::open(output_file, O_RDWR | O_CREAT, 0644);
+  int output_fd = ::open(output_nso, O_RDWR | O_CREAT, 0644);
   if (output_fd < 0) {
-    fprintf(stderr, "Failed to open %s: %d: %s\n", output_file, errno,
+    fprintf(stderr, "Failed to open %s: %d: %s\n", output_nso, errno,
             strerror(errno));
     return -1;
   }
